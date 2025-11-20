@@ -212,6 +212,84 @@ def _dedupe_sentences(text: str) -> str:
             cleaned.append(s)
     return " ".join(cleaned)
 
+def _is_answer_complete(text: str) -> bool:
+    """
+    Check if an answer appears complete based on common indicators.
+    
+    Returns:
+        bool: True if answer seems complete, False if likely truncated
+    """
+    if not text or len(text.strip()) < 10:
+        return False
+    
+    # Remove trailing whitespace for analysis
+    text = text.rstrip()
+    
+    # Incomplete indicators (signs of truncation)
+    incomplete_patterns = [
+        r'[,;:]$',                    # Ends with comma, semicolon, or colon
+        r'\b(and|or|but|however|therefore|thus|such as|including|like|e\.g\.|i\.e\.)$',  # Ends with conjunction
+        r'\((?![^()]*\))',            # Unclosed parenthesis
+        r'\[(?![^\[\]]*\])',          # Unclosed bracket
+        r'(?:for example|such as|including):?\s*$',  # Incomplete list introduction
+        r'\d+\.\s*$',                 # Ends with number followed by period (list item)
+        r'^.*\w-$',                   # Ends with hyphen (broken word)
+    ]
+    
+    for pattern in incomplete_patterns:
+        if re.search(pattern, text, re.IGNORECASE):
+            return False
+    
+    # Complete indicators (signs of proper ending)
+    complete_patterns = [
+        r'[.!?]$',                    # Ends with sentence-ending punctuation
+        r'\[end of text\]$',          # Explicit end marker
+        r'```\s*$',                   # Ends code block
+    ]
+    
+    for pattern in complete_patterns:
+        if re.search(pattern, text, re.IGNORECASE):
+            return True
+    
+    # If answer is very short and doesn't end with punctuation, likely incomplete
+    if len(text) < 100:
+        return False
+    
+    # Default: consider incomplete if no clear ending found
+    return False
+
+def _clean_answer_artifacts(text: str) -> str:
+    """
+    Remove common artifacts and formatting issues from generated answers.
+    
+    Args:
+        text: Raw answer text
+        
+    Returns:
+        str: Cleaned answer text
+    """
+    # Remove common text markers
+    artifacts = [
+        r'<<<QUESTION>>>',
+        r'<<<ENDANSWER>>>',
+        r'\[end of text\]',
+        r'<<<END_ANSWER>>>',
+    ]
+    
+    for artifact in artifacts:
+        text = re.sub(artifact, '', text, flags=re.IGNORECASE)
+    
+    # Fix escape sequences (common in markdown-like output)
+    text = text.replace(r'\*\*', '**')  # Bold
+    text = text.replace(r'\_', '_')     # Underscores
+    text = text.replace('&nbsp;', ' ')   # HTML space
+    
+    # Remove duplicate whitespace while preserving single newlines
+    text = re.sub(r' +', ' ', text)      # Multiple spaces to single
+    text = re.sub(r'\n\n+', '\n\n', text)  # Multiple newlines to double
+    
+    return text.strip()
+
 def answer(query: str, chunks, model_path: str, max_tokens: int = 300, **kw):
     prompt = format_prompt(chunks, query)
     approx_tokens = max(1, len(prompt) // 4)
@@ -220,9 +298,48 @@ def answer(query: str, chunks, model_path: str, max_tokens: int = 300, **kw):
     return _dedupe_sentences(raw)
 
 def answer(query: str, chunks, model_path: str, max_tokens: int = 300, 
-           system_prompt_mode: str = "tutor", **kw):
+           system_prompt_mode: str = "tutor", 
+           retry_incomplete: bool = True,
+           max_retries: int = 2,
+           **kw):
+    """
+    Generate an answer using the LLM with optional retry for incomplete answers.
+    
+    Args:
+        query: User question
+        chunks: Retrieved text chunks for context
+        model_path: Path to GGUF model file
+        max_tokens: Maximum tokens to generate
+        system_prompt_mode: System prompt style (tutor, concise, detailed, baseline)
+        retry_incomplete: Whether to retry if answer appears incomplete
+        max_retries: Maximum number of retry attempts
+        **kw: Additional arguments passed to run_llama_cpp
+        
+    Returns:
+        str: Generated answer, cleaned and validated
+    """
     prompt = format_prompt(chunks, query, system_prompt_mode=system_prompt_mode)
-    # approx_tokens = max(1, len(prompt) // 4)
-    #print(f"\n⚙️  Prompt length ≈ {approx_tokens} tokens (mode: {system_prompt_mode})\n")
-    raw = run_llama_cpp(prompt, model_path, max_tokens=max_tokens, **kw)
-    return _dedupe_sentences(raw)
+    
+    attempt = 0
+    current_max_tokens = max_tokens
+    
+    while attempt <= max_retries:
+        raw = run_llama_cpp(prompt, model_path, max_tokens=current_max_tokens, **kw)
+        deduped = _dedupe_sentences(raw)
+        cleaned = _clean_answer_artifacts(deduped)
+        
+        # Check if answer is complete
+        if not retry_incomplete or _is_answer_complete(cleaned):
+            return cleaned
+        
+        # Answer seems incomplete - retry with more tokens
+        attempt += 1
+        if attempt <= max_retries:
+            # Increase token limit by 50% each retry
+            current_max_tokens = int(current_max_tokens * 1.5)
+            # Optional: Log the retry (uncomment if needed)
+            # print(f"⚠️  Answer appears incomplete, retrying with {current_max_tokens} tokens (attempt {attempt}/{max_retries})")
+    
+    # After all retries, return best attempt with warning marker
+    # print(f"⚠️  Warning: Answer may be incomplete after {max_retries} retries")
+    return cleaned

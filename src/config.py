@@ -42,6 +42,10 @@ class QueryPlanConfig:
     use_hyde: bool
     hyde_max_tokens: int
     use_indexed_chunks: bool
+    
+    # answer quality control
+    retry_incomplete_answers: bool
+    max_answer_retries: int
 
     # ---------- chunking strategy + artifact name helpers ----------
     def make_strategy(self) -> ChunkStrategy:
@@ -91,6 +95,10 @@ class QueryPlanConfig:
             # Query Enhancement
             use_hyde       = pick("use_hyde", False),
             hyde_max_tokens= pick("hyde_max_tokens", 100),
+            
+            # Answer Quality Control
+            retry_incomplete_answers = pick("retry_incomplete_answers", True),
+            max_answer_retries = pick("max_answer_retries", 2),
         )
         cfg._validate()
         return cfg
@@ -137,4 +145,6 @@ class QueryPlanConfig:
             "use_indexed_chunks": self.use_indexed_chunks,
             "use_hyde": self.use_hyde,
             "hyde_max_tokens": self.hyde_max_tokens,
+            "retry_incomplete_answers": self.retry_incomplete_answers,
+            "max_answer_retries": self.max_answer_retries,
         }

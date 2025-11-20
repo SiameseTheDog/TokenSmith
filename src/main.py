@@ -222,7 +222,9 @@ def get_answer(
         ranked_chunks, 
         model_path, 
         max_tokens=cfg.max_gen_tokens, 
-        system_prompt_mode=system_prompt
+        system_prompt_mode=system_prompt,
+        retry_incomplete=cfg.retry_incomplete_answers,
+        max_retries=cfg.max_answer_retries
     )
     
     if is_test_mode:

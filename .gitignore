@@ -21,7 +21,6 @@ myenv/
 
 # --- Local config ---
 .env
-config.yaml
 !config.example.yaml   # keep a template in Git
 
 # --- Data & generated artefacts ---
